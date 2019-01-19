@@ -1,30 +1,24 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/jessevdk/go-flags"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
 /*
-  cli definition:
-  hibp-cli <email>
-  hibp-cli -f <file> -o output --format=json/text
- */
-
-/*
-  TODO: logs
   TODO: tests
-  TODO: cli flags
-  TODO: err handling http 429 + backoff
   TODO: nicer formatting
 */
 const (
@@ -33,6 +27,8 @@ const (
 	MaxRetries                = 10
 	DefaultBackoff            = time.Duration(7) * time.Second
 )
+
+var logger *log.Logger
 
 type HIBPBreach struct {
 	Name         string
@@ -60,43 +56,25 @@ type HIBPPaste struct {
 	EmailCount uint64
 }
 
-//func (d *date) UnmarshalJSON(b []byte) error {
-//	s := strings.Trim(string(b), "\"")
-//	t, err := time.Parse("2006-01-02", s)
-//	if err != nil {
-//		return err
-//	}
-//	*d = date(t)
-//	return nil
-//}
-//
-//func (d date) MarshalJSON() ([]byte, error) {
-//	return json.Marshal(d)
-//}
-//
-//// Maybe a Format function for printing your date
-//func (d date) Format(s string) string {
-//	t := time.Time(d)
-//	return t.Format(s)
-//}
-
-// TODO: simplify
 func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries uint) (error) {
 	url := fmt.Sprintf(urlTemplate, account)
 
 	for retries := uint(0); retries <= maxRetries; retries++ {
-		fmt.Printf("requesting %s\n", url)
+		logger.Printf("requesting %s\n", url)
 		netClient := &http.Client{
 			Timeout: time.Second * 10,
 		}
 
 		resp, err := netClient.Get(url)
 		if err != nil {
-			log.Printf("network error %s. sleeping %s", err.Error(), DefaultBackoff.String())
+			logger.Printf("network error %s. sleeping %s", err.Error(), DefaultBackoff.String())
 			time.Sleep(DefaultBackoff)
 			continue
 		}
 
+		if resp.StatusCode == 404 {
+			return nil
+		}
 		if resp.StatusCode != 200 {
 			retryAfter := resp.Header.Get("Retry-After")
 			backoffSeconds, err := strconv.ParseUint(retryAfter, 10, 64)
@@ -109,7 +87,7 @@ func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries
 				// add 1 second for safety
 				backoff = time.Duration(backoffSeconds+1) * time.Second
 			}
-			log.Printf("got http error %d for url %s. sleeping %s", resp.StatusCode, url, backoff.String())
+			logger.Printf("got http error %d for url %s. sleeping %s", resp.StatusCode, url, backoff.String())
 			time.Sleep(backoff)
 			continue
 		}
@@ -117,7 +95,7 @@ func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries
 		buf, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			err = err
-			log.Printf("error parsing json %s. sleeping %s", err.Error(), DefaultBackoff.String())
+			logger.Printf("error parsing json %s. sleeping %s", err.Error(), DefaultBackoff.String())
 			time.Sleep(DefaultBackoff)
 			continue
 		}
@@ -128,7 +106,7 @@ func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries
 	return errors.New(fmt.Sprintf("max retries exceeded (%d) for %s", maxRetries, url))
 }
 
-func getHIBPBreaches(account string) (*[]HIBPBreach, error) {
+func getHIBPBreaches(account string) ([]HIBPBreach, error) {
 	var breaches []HIBPBreach
 	if err := getHIBPResp(HIBPGetAccountBreachesURL, account, &breaches, MaxRetries); err != nil {
 		return nil, err
@@ -138,10 +116,10 @@ func getHIBPBreaches(account string) (*[]HIBPBreach, error) {
 		return breaches[i].BreachDate > breaches[j].BreachDate
 	})
 
-	return &breaches, nil
+	return breaches, nil
 }
 
-func getHIBPPastes(account string) (*[]HIBPPaste, error) {
+func getHIBPPastes(account string) ([]HIBPPaste, error) {
 	var pastes []HIBPPaste
 	if err := getHIBPResp(HIBPGetAccountPastesURL, account, &pastes, MaxRetries); err != nil {
 		return nil, err
@@ -150,52 +128,130 @@ func getHIBPPastes(account string) (*[]HIBPPaste, error) {
 	sort.Slice(pastes, func(i, j int) bool {
 		return pastes[i].Date.After(pastes[j].Date)
 	})
-	return &pastes, nil
+	return pastes, nil
 }
 
-func printHIBPAccountLeaks(account string) {
+func getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
 	breaches, err := getHIBPBreaches(account)
-
 	if err != nil {
-		fmt.Printf("error occurred: %s\n", err)
-		return
+		return nil, nil, err
 	}
 
 	pastes, err := getHIBPPastes(account)
 	if err != nil {
-		fmt.Printf("error occurred: %s\n", err)
-		return
+		return nil, nil, err
 	}
 
-	for _, breach := range *breaches {
-		fmt.Printf("%s: %s - %s\n", breach.BreachDate, breach.Domain, breach.Title)
+	return breaches, pastes, nil
+}
+
+func hibpAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) (string, error) {
+	if len(breaches) == 0 && len(pastes) == 0 {
+		return fmt.Sprintf("%s: no leaks\n", account), nil
 	}
 
-	fmt.Println("\npastes: ")
-	for _, paste := range *pastes {
-		fmt.Printf("%s: %s - %s\n", paste.Date, paste.Source, paste.Title)
+	var msg strings.Builder
+	for _, breach := range breaches {
+		msg.WriteString(fmt.Sprintf("%s: %s - %s\n", breach.BreachDate, breach.Domain, breach.Title))
+	}
+
+	msg.WriteString("\npastes:\n")
+	for _, paste := range pastes {
+		msg.WriteString(fmt.Sprintf("%s: %s - %s\n", paste.Date, paste.Source, paste.Title))
+	}
+
+	return msg.String(), nil
+}
+
+func jsonHIBPAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) (string, error) {
+	leaksMap := map[string]interface{}{"account": account, "breaches": breaches, "pastes": pastes}
+
+	leaksJSON, err := json.Marshal(&leaksMap)
+	if err != nil {
+		return "", err
+	}
+	return string(leaksJSON), nil
+}
+
+type outputFunc func(string, []HIBPBreach, []HIBPPaste) (string, error)
+
+func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
+	reader := bufio.NewReader(fp)
+
+	for {
+		line, err := reader.ReadString('\n')
+
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		account := strings.TrimSpace(line)
+
+		if account == "" {
+			continue
+		}
+
+		time.Sleep(time.Second * 2)
+
+		breaches, pastes, err := getHIBPLeaks(account)
+		if err != nil {
+			return err
+		}
+
+		msg, err := outputFn(account, breaches, pastes)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(msg)
 	}
 }
 
-func main() {
-	// TODO: implement all functions
-	var opts struct {
-		Account      string `short:"a" long:"account" description:"account to search leaks for"`
-		InFile       string `short:"i" long:"input-file" description:"input file of account to search, one account per line"`
-		OutFile      string `short:"o" long:"output-file" description:"output file, defaults to stdout" required:"false"`
-		OutputFormat string `short:"f" long:"format" description:"output format" default:"text" choice:"text" choice:"json"`
-	}
+type options struct {
+	Account string `short:"a" long:"account" description:"account to search leaks for"`
+	InFile  string `short:"i" long:"input-file" description:"input file of account to search, one account per line"`
+	//OutFile      string `short:"o" long:"output-file" description:"output file, defaults to stdout" required:"false"`
+	OutputFormat string `short:"f" long:"format" description:"output format, one of text or jsonl (json lines)" default:"text" choice:"text" choice:"jsonl"`
+}
 
-	_, err := flags.ParseArgs(&opts, os.Args)
+func parseArgs(args []string) (options) {
+	var opts options
+
+	_, err := flags.ParseArgs(&opts, args)
 
 	if err != nil {
-		return
-	}
-
-	if (opts.InFile == "") == (opts.Account == "") {
-		fmt.Println("please choose either --account or --input-file")
 		os.Exit(2)
 	}
 
-	printHIBPAccountLeaks(opts.Account)
+	if (opts.InFile == "") == (opts.Account == "") {
+		logger.Println("please choose either --account or --input-file")
+		os.Exit(2)
+	}
+	return opts
+}
+
+func printHIBPLeaks(opts options) {
+	fin, err := os.Open(opts.InFile)
+	defer fin.Close()
+
+	if err != nil {
+		logger.Fatalf("cannot read file %s: %s", opts.InFile, err.Error())
+	}
+
+	var outputFn outputFunc
+	if opts.OutputFormat == "jsonl" {
+		outputFn = jsonHIBPAccountLeaksFormatter
+	} else {
+		outputFn = hibpAccountLeaksFormatter
+	}
+	getHIBPAccountsLeaks(fin, outputFn)
+}
+
+func main() {
+	logger = log.New(os.Stderr, "", log.Ltime|log.Lshortfile)
+	opts := parseArgs(os.Args)
+	printHIBPLeaks(opts)
 }
