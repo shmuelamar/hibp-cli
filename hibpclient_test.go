@@ -42,7 +42,7 @@ func TestHIBPClient_GetHIBPBreaches(t *testing.T) {
 	defer server.Close()
 
 	api := HIBPClient{
-		Client:       &http.Client{Timeout: DefaultHTTPTimeout},
+		client:       &http.Client{Timeout: DefaultHTTPTimeout},
 		MaxRetries:   0,
 		RequestDelay: 0,
 		baseURL:      server.URL,

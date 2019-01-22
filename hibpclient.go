@@ -65,7 +65,7 @@ type HIBPPaste struct {
 }
 
 type HIBPClient struct {
-	Client       *http.Client // TODO: maybe make private
+	client       *http.Client
 	MaxRetries   uint
 	RequestDelay time.Duration
 	baseURL      string
@@ -92,7 +92,7 @@ func (api *HIBPClient) getHIBPResp(urlTemplate, account string, respObject inter
 		}
 		logger.Printf("requesting %s\n", url)
 
-		resp, err := api.Client.Get(url)
+		resp, err := api.client.Get(url)
 		// HIBP will block our IP if we do too many requests in short time
 		api.nextSleep = api.RequestDelay
 
