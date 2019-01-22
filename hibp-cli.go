@@ -22,7 +22,6 @@ import (
   TODO: tests
   TODO: modules
   TODO: nicer formatting (color / emoji)
-  TODO: docs
   TODO: single account
 */
 const (
@@ -127,7 +126,8 @@ func (api *HIBPClient) getHIBPResp(urlTemplate, account string, respObject inter
 	return errors.New(fmt.Sprintf("max retries exceeded (%d) for %s", api.MaxRetries, url))
 }
 
-func (api *HIBPClient) getHIBPBreaches(account string) ([]HIBPBreach, error) {
+// returns haveibeenpwned breaches for the given user or error upon failure
+func (api *HIBPClient) GetHIBPBreaches(account string) ([]HIBPBreach, error) {
 	var breaches []HIBPBreach
 	if err := api.getHIBPResp(HIBPGetAccountBreachesURL, account, &breaches); err != nil {
 		return nil, err
@@ -140,7 +140,8 @@ func (api *HIBPClient) getHIBPBreaches(account string) ([]HIBPBreach, error) {
 	return breaches, nil
 }
 
-func (api *HIBPClient) getHIBPPastes(account string) ([]HIBPPaste, error) {
+// returns haveibeenpwned pastes for the given user or error upon failure
+func (api *HIBPClient) GetHIBPPastes(account string) ([]HIBPPaste, error) {
 	var pastes []HIBPPaste
 	if err := api.getHIBPResp(HIBPGetAccountPastesURL, account, &pastes); err != nil {
 		return nil, err
@@ -152,13 +153,14 @@ func (api *HIBPClient) getHIBPPastes(account string) ([]HIBPPaste, error) {
 	return pastes, nil
 }
 
-func (api *HIBPClient) getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
-	breaches, err := api.getHIBPBreaches(account)
+// returns haveibeenpwned breaches and pastes for the given user or error upon failure
+func (api *HIBPClient) GetHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
+	breaches, err := api.GetHIBPBreaches(account)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	pastes, err := api.getHIBPPastes(account)
+	pastes, err := api.GetHIBPPastes(account)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -166,15 +168,17 @@ func (api *HIBPClient) getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, 
 	return breaches, pastes, nil
 }
 
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
+// returns true iff l contains s
+func contains(l []string, s string) bool {
+	for _, a := range l {
+		if a == s {
 			return true
 		}
 	}
 	return false
 }
 
+// returns unique copy of s with duplicate values removed
 func uniq(s []string) []string {
 	uniqueItems := make(map[string]bool)
 	for _, item := range s {
@@ -277,7 +281,7 @@ func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
 		// FIXME: now
 		time.Sleep(time.Second * DefaultRequestDelay) // TODO: expose as arg
 
-		breaches, pastes, err := HIBPClient.getHIBPLeaks(account)
+		breaches, pastes, err := HIBPClient.GetHIBPLeaks(account)
 		if err != nil {
 			return err
 		}
