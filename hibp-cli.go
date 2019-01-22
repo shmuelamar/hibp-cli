@@ -26,11 +26,12 @@ import (
   TODO: single account
 */
 const (
-	HIBPGetAccountBreachesURL = "https://haveibeenpwned.com/api/v2/breachedaccount/%s"
-	HIBPGetAccountPastesURL   = "https://haveibeenpwned.com/api/v2/pasteaccount/%s"
-	MaxRetries                = 10
+	HIBPBaseURL               = "https://haveibeenpwned.com"
+	HIBPGetAccountBreachesURL = "/api/v2/breachedaccount/%s"
+	HIBPGetAccountPastesURL   = "/api/v2/pasteaccount/%s"
+	DefaultMaxRetries         = 10
 	DefaultRequestDelay       = 10
-	DefaultBackoff            = time.Duration(7) * time.Second
+	DefaultErrorBackoff       = time.Duration(7) * time.Second
 )
 
 var logger *log.Logger
@@ -61,19 +62,34 @@ type HIBPPaste struct {
 	EmailCount uint64
 }
 
-func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries uint) (error) {
-	url := fmt.Sprintf(urlTemplate, account)
+type HIBPClient struct {
+	Client       *http.Client // TODO: maybe make private
+	MaxRetries   uint
+	ErrorBackoff time.Duration
+	RequestDelay time.Duration
+	baseURL      string
+}
 
-	for retries := uint(0); retries <= maxRetries; retries++ {
+func NewHIBPClient() *HIBPClient {
+	return &HIBPClient{
+		&http.Client{Timeout: time.Second * 10},
+		DefaultMaxRetries,
+		DefaultErrorBackoff,
+		DefaultRequestDelay,
+		HIBPBaseURL,
+	}
+}
+
+func (api *HIBPClient) getHIBPResp(urlTemplate, account string, respObject interface{}) (error) {
+	url := api.baseURL + fmt.Sprintf(urlTemplate, account)
+
+	for retries := uint(0); retries <= api.MaxRetries; retries++ {
 		logger.Printf("requesting %s\n", url)
-		netClient := &http.Client{
-			Timeout: time.Second * 10,
-		}
 
-		resp, err := netClient.Get(url)
+		resp, err := api.Client.Get(url)
 		if err != nil {
-			logger.Printf("network error %s. sleeping %s", err.Error(), DefaultBackoff.String())
-			time.Sleep(DefaultBackoff)
+			logger.Printf("network error %s. sleeping %s", err.Error(), api.ErrorBackoff.String())
+			time.Sleep(api.ErrorBackoff)
 			continue
 		}
 
@@ -87,7 +103,7 @@ func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries
 			// if no retry after use default
 			var backoff time.Duration
 			if err != nil {
-				backoff = DefaultBackoff
+				backoff = api.ErrorBackoff
 			} else {
 				// add 1 second for safety
 				backoff = time.Duration(backoffSeconds+1) * time.Second
@@ -100,20 +116,20 @@ func getHIBPResp(urlTemplate, account string, respObject interface{}, maxRetries
 		buf, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			err = err
-			logger.Printf("error parsing json %s. sleeping %s", err.Error(), DefaultBackoff.String())
-			time.Sleep(DefaultBackoff)
+			logger.Printf("error parsing json %s. sleeping %s", err.Error(), api.ErrorBackoff.String())
+			time.Sleep(api.ErrorBackoff)
 			continue
 		}
 
 		return json.Unmarshal(buf, &respObject)
 	}
 
-	return errors.New(fmt.Sprintf("max retries exceeded (%d) for %s", maxRetries, url))
+	return errors.New(fmt.Sprintf("max retries exceeded (%d) for %s", api.MaxRetries, url))
 }
 
-func getHIBPBreaches(account string) ([]HIBPBreach, error) {
+func (api *HIBPClient) getHIBPBreaches(account string) ([]HIBPBreach, error) {
 	var breaches []HIBPBreach
-	if err := getHIBPResp(HIBPGetAccountBreachesURL, account, &breaches, MaxRetries); err != nil {
+	if err := api.getHIBPResp(HIBPGetAccountBreachesURL, account, &breaches); err != nil {
 		return nil, err
 	}
 
@@ -124,9 +140,9 @@ func getHIBPBreaches(account string) ([]HIBPBreach, error) {
 	return breaches, nil
 }
 
-func getHIBPPastes(account string) ([]HIBPPaste, error) {
+func (api *HIBPClient) getHIBPPastes(account string) ([]HIBPPaste, error) {
 	var pastes []HIBPPaste
-	if err := getHIBPResp(HIBPGetAccountPastesURL, account, &pastes, MaxRetries); err != nil {
+	if err := api.getHIBPResp(HIBPGetAccountPastesURL, account, &pastes); err != nil {
 		return nil, err
 	}
 
@@ -136,13 +152,13 @@ func getHIBPPastes(account string) ([]HIBPPaste, error) {
 	return pastes, nil
 }
 
-func getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
-	breaches, err := getHIBPBreaches(account)
+func (api *HIBPClient) getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
+	breaches, err := api.getHIBPBreaches(account)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	pastes, err := getHIBPPastes(account)
+	pastes, err := api.getHIBPPastes(account)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -240,6 +256,7 @@ type outputFunc func(string, []HIBPBreach, []HIBPPaste) (string, error)
 
 func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
 	reader := bufio.NewReader(fp)
+	HIBPClient := NewHIBPClient()
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -257,9 +274,10 @@ func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
 			continue
 		}
 
+		// FIXME: now
 		time.Sleep(time.Second * DefaultRequestDelay) // TODO: expose as arg
 
-		breaches, pastes, err := getHIBPLeaks(account)
+		breaches, pastes, err := HIBPClient.getHIBPLeaks(account)
 		if err != nil {
 			return err
 		}
