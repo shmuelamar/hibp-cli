@@ -18,8 +18,12 @@ import (
 )
 
 /*
+  TODO: logs (color)
   TODO: tests
-  TODO: nicer formatting
+  TODO: modules
+  TODO: nicer formatting (color / emoji)
+  TODO: docs
+  TODO: single account
 */
 const (
 	HIBPGetAccountBreachesURL = "https://haveibeenpwned.com/api/v2/breachedaccount/%s"
