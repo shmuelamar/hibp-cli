@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/jessevdk/go-flags"
@@ -9,12 +10,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 )
 
 /*
   TODO: logs (color)
   TODO: nicer formatting (color / emoji)
-  TODO: single account
 */
 
 func hibpAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) (string, error) {
@@ -68,21 +69,22 @@ func hibpAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []H
 	return msg.String(), nil
 }
 
-func jsonHIBPAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) (string, error) {
+func jsonHIBPAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) ([]byte, error) {
 	leaksMap := map[string]interface{}{"account": account, "breaches": breaches, "pastes": pastes}
 
 	leaksJSON, err := json.Marshal(&leaksMap)
 	if err != nil {
-		return "", err
+		return []byte(""), err
 	}
-	return string(leaksJSON), nil
+
+	leaksJSON = append(leaksJSON, byte('\n'))
+	return leaksJSON, nil
 }
 
-type outputFunc func(string, []HIBPBreach, []HIBPPaste) (string, error)
-
-func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) error {
-	reader := bufio.NewReader(fp)
+func getHIBPAccountsLeaks(fin io.Reader, fout io.Writer, detailedOutput bool, requestDelay time.Duration) error {
+	reader := bufio.NewReader(fin)
 	HIBPClient := NewHIBPClient()
+	HIBPClient.RequestDelay = requestDelay
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -96,30 +98,48 @@ func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) error {
 
 		account := strings.TrimSpace(line)
 
+		// skip empty lines
 		if account == "" {
 			continue
 		}
 
+		// get leaks for current account
 		breaches, pastes, err := HIBPClient.GetHIBPLeaks(account)
 		if err != nil {
 			return err
 		}
 
-		msg, err := outputFn(account, breaches, pastes)
+		// print results to stdout
+		msg, err := hibpAccountLeaksFormatter(account, breaches, pastes)
+		if err != nil {
+			return err
+		}
+		fmt.Println(msg)
+
+		// if output file - print results to json-lines file
+		if !detailedOutput {
+			continue
+		}
+
+		jsonmsg, err := jsonHIBPAccountLeaksFormatter(account, breaches, pastes)
 		if err != nil {
 			return err
 		}
 
-		fmt.Println(msg)
+		_, err = fout.Write(jsonmsg)
+		if err != nil {
+			return err
+		}
 	}
 }
 
-// TODO: -f filename -o output.jsonl -q -d 5 <account>
+// TODO: -f filename -o output.jsonl -q -d 5 -a <account>
 type options struct {
-	Account string `short:"a" long:"account" description:"account to search leaks for"`
-	InFile  string `short:"f" long:"filename" description:"input filename of account to search, one account per line"`
-	//OutFile      string `short:"o" long:"output-file" description:"output file, defaults to stdout" required:"false"`
-	OutputFormat string `long:"format" description:"output format, one of text or jsonl (json lines)" default:"text" choice:"text" choice:"jsonl"`
+	Account      string        `short:"a" long:"account" description:"account to search leaks for"`
+	InFile       string        `short:"f" long:"filename" description:"input filename of account to search, one account per line"`
+	OutFile      string        `short:"o" long:"output" description:"output filename for detailed json-lines response" required:"false"`
+	RequestDelay time.Duration `short:"d" long:"request-delay" description:"request delay between each api call, default 10s" required:"false"`
+	//Quiet        bool          `short:"q" long:"quiet" description:"disable all log messages and only print leaks info"`
 }
 
 func parseArgs(args []string) options {
@@ -132,27 +152,43 @@ func parseArgs(args []string) options {
 	}
 
 	if (opts.InFile == "") == (opts.Account == "") {
-		logger.Println("please choose either --account or --filename")
+		fmt.Println("please choose either --account or --filename")
 		os.Exit(2)
+	}
+
+	if opts.RequestDelay == 0 {
+		opts.RequestDelay = DefaultRequestDelay
 	}
 	return opts
 }
 
 func printHIBPLeaks(opts options) {
-	fin, err := os.Open(opts.InFile)
-	defer fin.Close()
+	var fin io.Reader
+	if opts.InFile != "" {
+		fin, err := os.Open(opts.InFile)
 
-	if err != nil {
-		logger.Fatalf("cannot read file %s: %s", opts.InFile, err.Error())
-	}
-
-	var outputFn outputFunc
-	if opts.OutputFormat == "jsonl" {
-		outputFn = jsonHIBPAccountLeaksFormatter
+		if err != nil {
+			logger.Fatalf("cannot read file %s: %s", opts.InFile, err.Error())
+		}
+		defer fin.Close()
 	} else {
-		outputFn = hibpAccountLeaksFormatter
+		fin = bytes.NewReader(append([]byte(opts.Account), byte('\n')))
 	}
-	getHIBPAccountsLeaks(fin, outputFn)
+
+	var fout *bufio.Writer = nil
+	if opts.OutFile != "" {
+		logger.Printf("writing detailed responses to %s", opts.OutFile)
+		output, err := os.Create(opts.OutFile)
+		if err != nil {
+			logger.Fatalf("cannot write to file %s: %s", opts.OutFile, err.Error())
+		}
+		fout = bufio.NewWriter(output)
+		defer output.Close()
+		defer fout.Flush()
+	}
+	detailedOutput := fout != nil
+
+	getHIBPAccountsLeaks(fin, fout, detailedOutput, opts.RequestDelay)
 }
 
 func main() {
