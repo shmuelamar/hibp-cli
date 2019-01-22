@@ -25,6 +25,7 @@ const (
 	HIBPGetAccountBreachesURL = "https://haveibeenpwned.com/api/v2/breachedaccount/%s"
 	HIBPGetAccountPastesURL   = "https://haveibeenpwned.com/api/v2/pasteaccount/%s"
 	MaxRetries                = 10
+	DefaultRequestDelay       = 10
 	DefaultBackoff            = time.Duration(7) * time.Second
 )
 
@@ -145,20 +146,78 @@ func getHIBPLeaks(account string) ([]HIBPBreach, []HIBPPaste, error) {
 	return breaches, pastes, nil
 }
 
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+func uniq(s []string) []string {
+	uniqueItems := make(map[string]bool)
+	for _, item := range s {
+		uniqueItems[item] = true
+	}
+
+	keys := make([]string, len(uniqueItems))
+
+	i := 0
+	for k := range uniqueItems {
+		keys[i] = k
+		i++
+	}
+	return keys
+}
+
 func hibpAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes []HIBPPaste) (string, error) {
 	if len(breaches) == 0 && len(pastes) == 0 {
 		return fmt.Sprintf("%s: no leaks\n", account), nil
 	}
 
 	var msg strings.Builder
-	for _, breach := range breaches {
-		msg.WriteString(fmt.Sprintf("%s: %s - %s\n", breach.BreachDate, breach.Domain, breach.Title))
+
+	msg.WriteString(fmt.Sprintf("%s: ", account))
+	if len(breaches) == 0 {
+		msg.WriteString("no breaches")
+	} else {
+		firstBreach, lastBreach := breaches[0], breaches[len(breaches)-1]
+
+		var lastTitle string
+		if lastBreach.Domain != "" {
+			lastTitle = lastBreach.Domain
+		} else {
+			lastTitle = lastBreach.Title
+		}
+
+		var hasPassword string
+		if contains(lastBreach.DataClasses, "Passwords") {
+			hasPassword = "password"
+		} else {
+			hasPassword = "account only"
+		}
+
+		var verified string
+		if lastBreach.IsVerified {
+			verified = "verified"
+		} else {
+			verified = "unverified"
+		}
+		msg.WriteString(fmt.Sprintf("%d breaches between %s-%s. latest from %s [%s %s]", len(breaches),
+			firstBreach.BreachDate[:4], lastBreach.BreachDate[:4], lastTitle, verified, hasPassword))
 	}
 
-	msg.WriteString("\npastes:\n")
-	for _, paste := range pastes {
-		msg.WriteString(fmt.Sprintf("%s: %s - %s\n", paste.Date, paste.Source, paste.Title))
+	if len(pastes) == 0 {
+		return msg.String(), nil
 	}
+
+	pastesSources := make([]string, len(pastes))
+	for i, p := range pastes {
+		pastesSources[i] = p.Source
+	}
+	sources := strings.Join(uniq(pastesSources), ",")
+	msg.WriteString(fmt.Sprintf(" | %d pastes from %s\n", len(pastes), sources))
 
 	return msg.String(), nil
 }
@@ -194,7 +253,7 @@ func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
 			continue
 		}
 
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second * DefaultRequestDelay) // TODO: expose as arg
 
 		breaches, pastes, err := getHIBPLeaks(account)
 		if err != nil {
