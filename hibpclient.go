@@ -69,7 +69,7 @@ type HIBPClient struct {
 	MaxRetries   uint
 	RequestDelay time.Duration
 	baseURL      string
-	nextSleep    time.Duration
+	nextSleep    time.Duration // TODO: sleep once per both pastes / breaches
 }
 
 func NewHIBPClient() *HIBPClient {
@@ -82,7 +82,7 @@ func NewHIBPClient() *HIBPClient {
 	}
 }
 
-func (api *HIBPClient) getHIBPResp(urlTemplate, account string, respObject interface{}) (error) {
+func (api *HIBPClient) getHIBPResp(urlTemplate, account string, respObject interface{}) error {
 	url := api.baseURL + fmt.Sprintf(urlTemplate, account)
 
 	for retries := uint(0); retries <= api.MaxRetries; retries++ {

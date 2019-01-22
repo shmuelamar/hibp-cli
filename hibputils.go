@@ -10,19 +10,16 @@ func contains(l []string, s string) bool {
 	return false
 }
 
-// returns unique copy of s with duplicate values removed
+// returns unique copy of s with duplicate values removed keeping the original slice order
 func uniq(s []string) []string {
 	uniqueItems := make(map[string]bool)
+	var keys []string
+
 	for _, item := range s {
-		uniqueItems[item] = true
-	}
-
-	keys := make([]string, len(uniqueItems))
-
-	i := 0
-	for k := range uniqueItems {
-		keys[i] = k
-		i++
+		if _, ok := uniqueItems[item]; !ok {
+			keys = append(keys, item)
+			uniqueItems[item] = true
+		}
 	}
 	return keys
 }

@@ -13,7 +13,6 @@ import (
 
 /*
   TODO: logs (color)
-  TODO: tests
   TODO: nicer formatting (color / emoji)
   TODO: single account
 */
@@ -81,7 +80,7 @@ func jsonHIBPAccountLeaksFormatter(account string, breaches []HIBPBreach, pastes
 
 type outputFunc func(string, []HIBPBreach, []HIBPPaste) (string, error)
 
-func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) (error) {
+func getHIBPAccountsLeaks(fp io.Reader, outputFn outputFunc) error {
 	reader := bufio.NewReader(fp)
 	HIBPClient := NewHIBPClient()
 
@@ -123,7 +122,7 @@ type options struct {
 	OutputFormat string `long:"format" description:"output format, one of text or jsonl (json lines)" default:"text" choice:"text" choice:"jsonl"`
 }
 
-func parseArgs(args []string) (options) {
+func parseArgs(args []string) options {
 	var opts options
 
 	_, err := flags.ParseArgs(&opts, args)
