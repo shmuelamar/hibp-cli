@@ -15,7 +15,7 @@ import (
 )
 
 // current program version
-const Version = "0.1.0"
+const Version = "v0.1.0"
 
 /*
   TODO: logs (color)
@@ -143,6 +143,7 @@ type options struct {
 	InFile       string        `short:"f" long:"filename" description:"input filename of account to search, one account per line"`
 	OutFile      string        `short:"o" long:"output" description:"output filename for detailed json-lines response" required:"false"`
 	RequestDelay time.Duration `short:"d" long:"request-delay" description:"request delay between each api call, default 10s" required:"false"`
+	Version      bool          `long:"version" description:"prints program version and exits"`
 	//Quiet        bool          `short:"q" long:"quiet" description:"disable all log messages and only print leaks info"`
 }
 
@@ -153,6 +154,11 @@ func parseArgs(args []string) options {
 
 	if err != nil {
 		os.Exit(2)
+	}
+
+	if opts.Version {
+		fmt.Println(Version)
+		os.Exit(0)
 	}
 
 	if (opts.InFile == "") == (opts.Account == "") {
