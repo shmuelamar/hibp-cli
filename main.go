@@ -1,3 +1,4 @@
+// haveibeenpwned.com cli for get breached accounts details
 package main
 
 import (
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"time"
 )
+
+// current program version
+const Version = "0.1.0"
 
 /*
   TODO: logs (color)
