@@ -13,10 +13,10 @@ build:
 
 	find dist/ -name "$(BINARY_NAME)-*" -exec bzip2 {} \;
 
-test:
+validate:
+	test -z $(shell gofmt -l $(BUILD_FILES) | tee /dev/stderr)
+
+test: validate
 	go test -v
 
 release: test build
-
-all:
-	$(error please pick a target)

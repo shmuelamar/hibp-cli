@@ -27,3 +27,12 @@ Help Options:
   -h, --help           Show this help message
 
 ```
+
+
+## Create New Release
+
+run:
+
+```bash
+make release
+```
