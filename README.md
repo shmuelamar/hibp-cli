@@ -8,6 +8,9 @@ to @troyhunt for sharing this info freely for safer online world.
 please read the [rate limits](https://haveibeenpwned.com/API/v2#RateLimiting) of haveibeenpwned.com and honor them,
 use this software on your own risk.
 
+## Download
+
+download for windows linux or osx available at the [releases](https://github.com/shmuelamar/hibp-cli/releases) page
 
 ## Usage
 
